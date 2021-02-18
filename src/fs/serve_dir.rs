@@ -1,19 +1,18 @@
 use crate::log;
 use crate::{Body, Endpoint, Request, Response, Result, StatusCode};
 
-use async_std::path::PathBuf as AsyncPathBuf;
+use async_std::io::BufReader;
 
-use std::path::{Path, PathBuf};
-use std::{ffi::OsStr, io};
+use cap_async_std::fs;
 
 pub(crate) struct ServeDir {
     prefix: String,
-    dir: PathBuf,
+    dir: fs::Dir,
 }
 
 impl ServeDir {
     /// Create a new instance of `ServeDir`.
-    pub(crate) fn new(prefix: String, dir: PathBuf) -> Self {
+    pub(crate) fn new(prefix: String, dir: fs::Dir) -> Self {
         Self { prefix, dir }
     }
 }
@@ -29,33 +28,26 @@ where
             .strip_prefix(&self.prefix.trim_end_matches('*'))
             .unwrap();
         let path = path.trim_start_matches('/');
-        let mut file_path = self.dir.clone();
-        for p in Path::new(path) {
-            if p == OsStr::new(".") {
-                continue;
-            } else if p == OsStr::new("..") {
-                file_path.pop();
-            } else {
-                file_path.push(&p);
-            }
-        }
 
-        log::info!("Requested file: {:?}", file_path);
+        log::info!("Requested file: {:?}", path);
 
-        let file_path = AsyncPathBuf::from(file_path);
-        if !file_path.starts_with(&self.dir) {
-            log::warn!("Unauthorized attempt to read: {:?}", file_path);
-            Ok(Response::new(StatusCode::Forbidden))
-        } else {
-            match Body::from_file(&file_path).await {
-                Ok(body) => Ok(Response::builder(StatusCode::Ok).body(body).build()),
-                Err(e) if e.kind() == io::ErrorKind::NotFound => {
-                    log::warn!("File not found: {:?}", &file_path);
-                    Ok(Response::new(StatusCode::NotFound))
-                }
-                Err(e) => Err(e.into()),
+        let file = match self.dir.open(path).await {
+            Ok(file) => file,
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                log::warn!("Unauthorized attempt to read: {:?}", path);
+                return Ok(Response::new(StatusCode::Forbidden));
             }
-        }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                log::warn!("File not found: {:?}", path);
+                return Ok(Response::new(StatusCode::NotFound));
+            }
+            Err(e) => return Err(e.into()),
+        };
+
+        // TODO: This always uses `mime::BYTE_STREAM`; with http-types 3.0
+        // we'll be able to use `Body::from_open_file` which fixes this.
+        let body = Body::from_reader(BufReader::new(file), None);
+        Ok(Response::builder(StatusCode::Ok).body(body).build())
     }
 }
 
@@ -63,21 +55,27 @@ where
 mod test {
     use super::*;
 
-    use std::fs::{self, File};
-    use std::io::Write;
+    use async_std::io::WriteExt;
+    use cap_async_std::ambient_authority;
+    use cap_async_std::fs::Dir;
 
     fn serve_dir(tempdir: &tempfile::TempDir) -> crate::Result<ServeDir> {
-        let static_dir = tempdir.path().join("static");
-        fs::create_dir(&static_dir)?;
-
-        let file_path = static_dir.join("foo");
-        let mut file = File::create(&file_path)?;
-        write!(file, "Foobar")?;
+        let static_dir = async_std::task::block_on(async { setup_static_dir(tempdir).await })?;
 
         Ok(ServeDir {
             prefix: "/static/".to_string(),
             dir: static_dir,
         })
+    }
+
+    async fn setup_static_dir(tempdir: &tempfile::TempDir) -> crate::Result<Dir> {
+        let static_dir = tempdir.path().join("static");
+        Dir::create_ambient_dir_all(&static_dir, ambient_authority()).await?;
+
+        let static_dir = Dir::open_ambient_dir(static_dir, ambient_authority()).await?;
+        let mut file = static_dir.create("foo").await?;
+        write!(file, "Foobar").await?;
+        Ok(static_dir)
     }
 
     fn request(path: &str) -> crate::Request<()> {

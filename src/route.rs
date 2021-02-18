@@ -1,3 +1,6 @@
+use async_std::task;
+use cap_async_std::ambient_authority;
+use cap_async_std::fs::Dir;
 use std::fmt::Debug;
 use std::io;
 use std::path::Path;
@@ -165,7 +168,8 @@ impl<'a, State: Clone + Send + Sync + 'static> Route<'a, State> {
     /// ```
     pub fn serve_dir(&mut self, dir: impl AsRef<Path>) -> io::Result<()> {
         // Verify path exists, return error if it doesn't.
-        let dir = dir.as_ref().to_owned().canonicalize()?;
+        let path = dir.as_ref().to_owned().canonicalize()?;
+        let dir = task::block_on(async { Dir::open_ambient_dir(path, ambient_authority()).await })?;
         let prefix = self.path().to_string();
         self.get(ServeDir::new(prefix, dir));
         Ok(())
