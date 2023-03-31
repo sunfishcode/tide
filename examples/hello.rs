@@ -1,3 +1,5 @@
+extern crate eyra;
+
 #[async_std::main]
 async fn main() -> Result<(), std::io::Error> {
     femme::start();
