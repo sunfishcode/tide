@@ -51,6 +51,7 @@ routefinder = "0.5.0"
 regex = "1.5.5"
 
 [dev-dependencies]
+mustang = "0.8.11"
 async-std = { version = "1.6.5", features = ["unstable", "attributes"] }
 criterion = "0.3.3"
 femme = "2.1.1"
@@ -60,7 +61,8 @@ lazy_static = "1.4.0"
 logtest = "2.0.0"
 portpicker = "0.1.0"
 serde = { version = "1.0.117", features = ["derive"] }
-surf = { version = "2.0.0", default-features = false, features = ["h1-client"] }
+# surf pulls in openssl which is complex to compile
+#surf = { version = "2.0.0", default-features = false, features = ["h1-client"] }
 tempfile = "3.1.0"
 
 [[test]]

@@ -1,3 +1,5 @@
+mustang::can_run_this!();
+
 #[async_std::main]
 async fn main() -> Result<(), std::io::Error> {
     femme::start();
